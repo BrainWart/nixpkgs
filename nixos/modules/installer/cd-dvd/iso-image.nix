@@ -31,6 +31,7 @@ let
             option.params or ""
           }
           initrd ${defaults.initrd}
+          ${optionalString (option ? devicetree) "devicetree ${option.devicetree}"}
         }
       '')
       options
@@ -52,7 +53,9 @@ let
    * Given params to add to `params`, build a set of default options.
    * Use this one when creating a variant (e.g. hidpi)
    */
-  buildMenuAdditionalParamsGrub2 = additional:
+  buildMenuAdditionalParamsGrub2 = buildMenuOverridesGrub2 {};
+
+  buildMenuOverridesGrub2 = overrides: additional:
   let
     finalCfg = {
       name = "${config.isoImage.prependToMenuLabel}${config.system.nixos.distroName} ${config.system.nixos.label}${config.isoImage.appendToMenuLabel}";
@@ -65,12 +68,35 @@ let
     menuBuilderGrub2
     finalCfg
     [
-      { class = "installer"; }
-      { class = "nomodeset"; params = "nomodeset"; }
-      { class = "copytoram"; params = "copytoram"; }
-      { class = "debug";     params = "debug"; }
+      ({ class = "installer"; } // overrides)
+      ({ class = "nomodeset"; params = "nomodeset"; } // overrides)
+      ({ class = "copytoram"; params = "copytoram"; } // overrides)
+      ({ class = "debug";     params = "debug"; } // overrides)
     ]
   ;
+
+  # Create submenus and menus for the available device trees
+  buildMenuDeviceTreeGrub2 = with builtins; (relPath: realPath:
+    (dtbsRead: foldl' ( menus: entryName:
+      if (dtbsRead.${entryName} == "regular")
+      then menus + ''
+        submenu '${entryName}' {
+          ${grubMenuCfg}
+          ${buildMenuOverridesGrub2 { devicetree = "${relPath}/${entryName}"; } ""}
+        }
+      ''
+      else if (dtbsRead.${entryName} == "directory")
+      then menus + ''
+        submenu '${entryName}' {
+          ${grubMenuCfg}
+          ${buildMenuDeviceTreeGrub2 "${relPath}/${entryName}" "${realPath}/${entryName}"}
+        }
+      ''
+      else abort "filetype(${dtbsRead.${entryName}}) not handled for device tree entry"
+    ) "" (attrNames dtbsRead)) (readDir "${realPath}")
+  );
+
+  menuDeviceTreeGrub2 = buildMenuDeviceTreeGrub2 "/boot/dtbs" "${config.hardware.deviceTree.package}";
 
   # Timeout in syslinux is in units of 1/10 of a second.
   # null means max timeout (35996, just under 1h in 1/10 seconds)
@@ -406,6 +432,14 @@ let
         ${grubMenuCfg}
         ${buildMenuAdditionalParamsGrub2 "console=ttyS0,115200n8"}
       }
+
+      ${lib.optionalString config.hardware.deviceTree.enable ''
+      submenu "" {return}
+      submenu "Manual Device Tree Selection" --class dt-selection {
+        ${grubMenuCfg}
+        ${menuDeviceTreeGrub2}
+      }
+      ''}
     }
 
     ${lib.optionalString (refindBinary != null) ''
@@ -854,6 +888,14 @@ in
       ] ++ optionals (config.boot.loader.grub.memtest86.enable && config.isoImage.makeBiosBootable) [
         { source = "${pkgs.memtest86plus}/memtest.bin";
           target = "/boot/memtest.bin";
+        }
+      ] ++ optionals (config.hardware.deviceTree.enable) [
+        { source = "${config.hardware.deviceTree.package}";
+          target = "/boot/dtbs";
+        }
+      ] ++ optionals (config.hardware.deviceTree.enable && config.isoImage.makeEfiBootable) [
+        { source = "${config.hardware.deviceTree.package}";
+          target = "/EFI/boot/dtbs";
         }
       ] ++ optionals (config.isoImage.grubTheme != null) [
         { source = config.isoImage.grubTheme;
