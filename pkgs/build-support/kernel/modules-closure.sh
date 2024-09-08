@@ -67,35 +67,8 @@ for module in $rootModules; do
 done
 
 cd "$firmware"
-for module in $(< ~-/closure); do
-    # for builtin modules, modinfo will reply with a wrong output looking like:
-    #   $ modinfo -F firmware unix
-    #   name:           unix
-    #
-    # There is a pending attempt to fix this:
-    #   https://github.com/NixOS/nixpkgs/pull/96153
-    #   https://lore.kernel.org/linux-modules/20200823215433.j5gc5rnsmahpf43v@blumerang/T/#u
-    #
-    # For now, the workaround is just to filter out the extraneous lines out
-    # of its output.
-    modinfo -b $kernel --set-version "$version" -F firmware $module | grep -v '^name:' | while read -r i; do
-        echo "firmware for $module: $i"
-        for name in "$i" "$i.xz" "$i.zst" ""; do
-            [ -z "$name" ] && echo "WARNING: missing firmware $i for module $module"
-            if cp -v --parents --no-preserve=mode lib/firmware/$name "$out" 2>/dev/null; then
-                break
-            fi
-        done
-    done || :
-done
-
-if test -e lib/firmware/edid ; then
-    echo "lib/firmware/edid found, copying."
-    mkdir -p "$out/lib/firmware"
-    cp -v --no-preserve=mode --recursive --dereference --no-target-directory lib/firmware/edid "$out/lib/firmware/edid"
-else
-    echo "lib/firmware/edid not found, skipping."
-fi
+mkdir -p "$out/lib/firmware"
+cp -v --no-preserve=mode --recursive --dereference --no-target-directory lib/firmware "$out/lib/firmware"
 
 # copy module ordering hints for depmod
 cp $kernel/lib/modules/"$version"/modules.order $out/lib/modules/"$version"/.
